@@ -1,45 +1,40 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <title>股票数据查询</title>
-    <style>
-        body { font-family: Arial; margin: 20px; }
-        table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid #ccc; padding: 6px; text-align: center; }
-        .error { color: red; }
-    </style>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
-<body>
-    <h2>股票历史数据查询（仅预览）</h2>
-    <input type="text" id="code" placeholder="输入股票代码，如600584">
-    <button onclick="queryData()">查询</button>
-    <button onclick="exportCSV()">导出CSV</button>
-    <div id="result" style="margin-top:20px;"></div>
+<body class="container mt-4">
+    <h2>A股日线数据查询（新浪数据源）</h2>
+    <div class="row mt-3">
+        <div class="col-auto">
+            <input type="text" id="stockCode" class="form-control" placeholder="输入股票代码：600584/000001">
+        </div>
+        <div class="col-auto">
+            <button class="btn btn-primary" onclick="getData()">查询数据</button>
+            <a class="btn btn-success d-none" id="downBtn" href="">导出CSV</a>
+        </div>
+    </div>
+    <div class="mt-4" id="tableBox"></div>
 
     <script>
-        async function queryData() {
-            const code = document.getElementById('code').value.trim();
-            if (!code) {
-                alert('请输入代码');
+        async function getData(){
+            let code = document.getElementById('stockCode').value.trim();
+            if(!code){
+                alert("请输入股票代码");
                 return;
             }
-            const res = await fetch(`/api/data?code=${code}`);
-            const data = await res.json();
-            if (data.status === 'ok') {
-                document.getElementById('result').innerHTML = data.preview_html;
-            } else {
-                document.getElementById('result').innerHTML = `<p class="error">错误：${data.message}</p>`;
+            let res = await fetch(`/api/data?code=${code}`).then(r=>r.json());
+            if(res.status!=='ok'){
+                alert(res.message);
+                return;
             }
-        }
-
-        function exportCSV() {
-            const code = document.getElementById('code').value.trim();
-            if (code) {
-                window.location.href = `/export?code=${code}`;
-            } else {
-                alert('请先查询');
-            }
+            document.getElementById('tableBox').innerHTML = res.preview_html;
+            // 修改下载链接
+            let down = document.getElementById('downBtn');
+            down.classList.remove('d-none');
+            down.href = `/export?code=${code}`;
         }
     </script>
 </body>
