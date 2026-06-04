@@ -31,7 +31,6 @@
                 return;
             }
             document.getElementById('tableBox').innerHTML = res.preview_html;
-            // 修改下载链接
             let down = document.getElementById('downBtn');
             down.classList.remove('d-none');
             down.href = `/export?code=${code}`;
