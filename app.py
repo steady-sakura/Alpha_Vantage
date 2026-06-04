@@ -45,7 +45,7 @@ def clean_data(df):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index1.html')
 
 @app.route('/api/data')
 def api_data():
