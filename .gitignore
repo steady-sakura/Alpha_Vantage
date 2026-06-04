@@ -1,0 +1,18 @@
+# 虚拟环境
+.venv/
+venv/
+ENV/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE 配置（PyCharm / VSCode）
+.idea/
+.vscode/
+*.iml
+
+# Flask 运行时文件
+instance/
+*.log
