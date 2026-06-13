@@ -111,8 +111,12 @@ def api_data():
         return jsonify({'status': 'error', 'message': '未获取到数据，请检查股票代码'})
     csv_path = os.path.join(app.config['UPLOAD_FOLDER'], f'{code}.csv')
     df.to_csv(csv_path, index=False)
-    preview_html = df.tail(10).to_html(classes='table table-sm table-bordered')
-    return jsonify({'status': 'ok', 'preview_html': preview_html})
+    # 返回全部数据（按日期降序）
+    records = df.to_dict(orient='records')
+    # 日期转为字符串
+    for rec in records:
+        rec['date'] = rec['date'].strftime('%Y-%m-%d')
+    return jsonify({'status': 'ok', 'data': records})
 
 
 @app.route('/api/charts')
