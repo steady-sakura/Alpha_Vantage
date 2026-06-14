@@ -15,17 +15,13 @@ app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-# 内存缓存
 cache = {}
 stock_name_cache = {}
 
 
 def fetch_stock_data(symbol, days=120):
-    """获取股票数据，带缓存（5分钟）"""
     if symbol in cache and (time.time() - cache[symbol]['timestamp']) < 300:
-        print(f"使用缓存: {symbol}")
         return cache[symbol]['df'].copy()
-
     if symbol.startswith('6'):
         full_symbol = f'sh{symbol}'
     else:
@@ -42,9 +38,7 @@ def fetch_stock_data(symbol, days=120):
         if not data:
             return None
         df = pd.DataFrame(data)
-        df.rename(
-            columns={'day': 'date', 'open': 'open', 'high': 'high', 'low': 'low', 'close': 'close', 'volume': 'volume'},
-            inplace=True)
+        df.rename(columns={'day': 'date', 'open': 'open', 'high': 'high', 'low': 'low', 'close': 'close', 'volume': 'volume'}, inplace=True)
         df['date'] = pd.to_datetime(df['date'])
         for col in ['open', 'high', 'low', 'close', 'volume']:
             df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -57,7 +51,6 @@ def fetch_stock_data(symbol, days=120):
 
 
 def get_stock_name(symbol):
-    """获取股票企业名称（带缓存）"""
     if symbol in stock_name_cache:
         return stock_name_cache[symbol]
     if symbol.startswith('6'):
@@ -65,10 +58,7 @@ def get_stock_name(symbol):
     else:
         full_symbol = f'sz{symbol}'
     url = f"https://hq.sinajs.cn/list={full_symbol}"
-    headers = {
-        'User-Agent': 'Mozilla/5.0',
-        'Referer': 'https://finance.sina.com.cn'
-    }
+    headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'}
     try:
         resp = requests.get(url, headers=headers, timeout=5)
         resp.encoding = 'gbk'
@@ -87,10 +77,8 @@ def get_stock_name(symbol):
 
 
 def forecast_ohlc(df, days=5):
-    """预测未来多日的OHLC数据，返回DataFrame（日期、开盘、最高、最低、收盘）"""
     if len(df) < 5:
         return pd.DataFrame()
-
     X = np.arange(len(df)).reshape(-1, 1)
     y_close = df['close'].values
     model_close = LinearRegression()
@@ -120,7 +108,6 @@ def forecast_ohlc(df, days=5):
 
     last_date = df['date'].iloc[-1]
     pred_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=days, freq='B')
-
     pred_df = pd.DataFrame({
         'date': pred_dates,
         'open': pred_open,
@@ -132,7 +119,6 @@ def forecast_ohlc(df, days=5):
 
 
 def forecast_volume(df, days=5):
-    """预测未来成交量（线性回归）"""
     if len(df) < 10:
         return np.array([])
     X = np.arange(len(df)).reshape(-1, 1)
@@ -141,13 +127,11 @@ def forecast_volume(df, days=5):
     model.fit(X, y)
     X_pred = np.arange(len(df), len(df) + days).reshape(-1, 1)
     pred_vol = model.predict(X_pred)
-    # 成交量不能为负数
     pred_vol = np.maximum(pred_vol, 0)
     return pred_vol
 
 
 def compute_rsi(close_prices, period=14):
-    """计算RSI指标"""
     delta = close_prices.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
@@ -157,7 +141,6 @@ def compute_rsi(close_prices, period=14):
 
 
 def kmeans_market_state(df):
-    """K-Means聚类识别市场状态"""
     if len(df) < 10:
         return "数据不足，无法聚类"
     df_feat = df.copy()
@@ -228,101 +211,90 @@ def api_charts():
             return jsonify({'status': 'error', 'message': '数据为空'})
         df = df.sort_values('date').reset_index(drop=True)
 
-        # 预测OHLC（包含收盘价）
         pred_df = forecast_ohlc(df, pred_days)
-
-        # 预测成交量
         pred_vol = forecast_volume(df, pred_days)
         has_vol_pred = len(pred_vol) > 0
 
-        # 计算移动平均线（历史部分）
+        # 历史均线
         df['MA5'] = df['close'].rolling(5).mean()
         df['MA20'] = df['close'].rolling(20).mean()
 
-        # 构建完整收盘价序列（历史+预测）用于计算延伸MA和RSI
+        # 构建包含预测的完整序列用于 MA/RSI 连接
         if not pred_df.empty:
             full_close = pd.concat([df['close'], pred_df['close']], ignore_index=True)
-            # 计算完整MA
             full_ma5 = full_close.rolling(5).mean()
             full_ma20 = full_close.rolling(20).mean()
-            # 提取预测部分的MA5/MA20
             pred_ma5 = full_ma5.iloc[len(df):]
             pred_ma20 = full_ma20.iloc[len(df):]
-            # 计算完整RSI
+
+            # 连接点
+            last_hist_date = df['date'].iloc[-1]
+            last_hist_ma5 = df['MA5'].iloc[-1]
+            last_hist_ma20 = df['MA20'].iloc[-1]
+            connect_dates = pd.Series([last_hist_date] + pred_df['date'].tolist())
+            connect_ma5 = pd.Series([last_hist_ma5] + pred_ma5.tolist())
+            connect_ma20 = pd.Series([last_hist_ma20] + pred_ma20.tolist())
+
+            # RSI 连接
             full_rsi = compute_rsi(full_close, 14)
             pred_rsi = full_rsi.iloc[len(df):]
+            last_hist_rsi = compute_rsi(df['close'], 14).iloc[-1]
+            connect_rsi = pd.Series([last_hist_rsi] + pred_rsi.tolist())
         else:
-            pred_ma5 = pd.Series(dtype=float)
-            pred_ma20 = pd.Series(dtype=float)
-            pred_rsi = pd.Series(dtype=float)
+            connect_dates = connect_ma5 = connect_ma20 = connect_rsi = None
 
-        # 市场状态文字
         market_state = kmeans_market_state(df)
         stock_name = get_stock_name(code)
 
-        # 创建3个子图
         fig = make_subplots(
             rows=3, cols=1, shared_xaxes=True,
             vertical_spacing=0.03,
             row_heights=[0.6, 0.2, 0.2],
-            subplot_titles=('K线图 + 预测K线 (延长) + MA5/MA20延伸', '成交量 (真实 + 预测)', 'RSI (真实 + 预测)')
+            subplot_titles=('K线图 + 预测K线', '成交量 (红绿:真实; 橙色:预测)', 'RSI (实线:历史; 虚线:预测连续)')
         )
 
-        # ===== 第一行：K线图 + 均线延伸 =====
-        # 真实K线
+        # ---------- 第一行：K线 ----------
         fig.add_trace(go.Candlestick(
             x=df['date'], open=df['open'], high=df['high'],
             low=df['low'], close=df['close'], name='真实K线'
         ), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df['date'], y=df['MA5'], mode='lines', name='MA5 (历史)', line=dict(color='orange', width=1.5)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df['date'], y=df['MA20'], mode='lines', name='MA20 (历史)', line=dict(color='blue', width=1.5)), row=1, col=1)
 
-        # 真实均线（只画到历史最后一天，避免重复）
-        fig.add_trace(go.Scatter(x=df['date'], y=df['MA5'], mode='lines', name='MA5 (历史)',
-                                 line=dict(color='orange', width=1.5)), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df['date'], y=df['MA20'], mode='lines', name='MA20 (历史)',
-                                 line=dict(color='blue', width=1.5)), row=1, col=1)
-
-        # 预测K线（延长部分）
         if not pred_df.empty:
             fig.add_trace(go.Candlestick(
                 x=pred_df['date'], open=pred_df['open'], high=pred_df['high'],
                 low=pred_df['low'], close=pred_df['close'],
                 name=f'预测K线({pred_days}日)',
                 increasing_line_color='rgba(255,100,100,0.6)',
-                decreasing_line_color='rgba(100,255,100,0.6)',
-                line_width=1.5
+                decreasing_line_color='rgba(100,255,100,0.6)'
             ), row=1, col=1)
-
-            # 预测均线延伸（使用虚线）
-            fig.add_trace(go.Scatter(x=pred_df['date'], y=pred_ma5, mode='lines', name='MA5 (预测延伸)',
+            fig.add_trace(go.Scatter(x=connect_dates, y=connect_ma5, mode='lines', name='MA5 (预测延伸)',
                                      line=dict(color='orange', width=1.5, dash='dash')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=pred_df['date'], y=pred_ma20, mode='lines', name='MA20 (预测延伸)',
+            fig.add_trace(go.Scatter(x=connect_dates, y=connect_ma20, mode='lines', name='MA20 (预测延伸)',
                                      line=dict(color='blue', width=1.5, dash='dash')), row=1, col=1)
 
-        # ===== 第二行：成交量（真实柱状图 + 预测折线/柱状图） =====
+        # ---------- 第二行：成交量（柱状图：真实用红绿，预测用橙色半透明） ----------
         colors = ['red' if close >= open_ else 'green' for close, open_ in zip(df['close'], df['open'])]
         fig.add_trace(go.Bar(x=df['date'], y=df['volume'], name='真实成交量', marker_color=colors), row=2, col=1)
 
         if has_vol_pred and not pred_df.empty:
-            # 预测成交量用橙色虚线+圆点表示
-            fig.add_trace(go.Scatter(x=pred_df['date'], y=pred_vol, mode='lines+markers', name='预测成交量',
-                                     line=dict(color='orange', width=2, dash='dot'), marker=dict(size=6, color='gold')),
-                          row=2, col=1)
+            # 预测成交量使用橙色柱状图
+            fig.add_trace(go.Bar(x=pred_df['date'], y=pred_vol, name='预测成交量',
+                                 marker_color='rgba(255, 165, 0, 0.7)', opacity=0.8), row=2, col=1)
 
-        # ===== 第三行：RSI（真实 + 预测） =====
+        # ---------- 第三行：RSI ----------
         df['RSI'] = compute_rsi(df['close'], 14)
-        fig.add_trace(go.Scatter(x=df['date'], y=df['RSI'], mode='lines', name='RSI(14) 历史',
-                                 line=dict(color='purple', width=2)), row=3, col=1)
+        fig.add_trace(go.Scatter(x=df['date'], y=df['RSI'], mode='lines', name='RSI(14) 历史', line=dict(color='purple', width=2)), row=3, col=1)
 
-        if not pred_rsi.empty and not pred_df.empty:
-            fig.add_trace(go.Scatter(x=pred_df['date'], y=pred_rsi, mode='lines', name='RSI(14) 预测',
+        if connect_rsi is not None:
+            fig.add_trace(go.Scatter(x=connect_dates, y=connect_rsi, mode='lines', name='RSI(14) 预测',
                                      line=dict(color='orange', width=2, dash='dash')), row=3, col=1)
 
-        # 超买超卖参考线
         fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="超买线(70)", row=3, col=1)
         fig.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="超卖线(30)", row=3, col=1)
         fig.update_yaxes(range=[0, 100], row=3, col=1)
 
-        # 整体布局
         fig.update_layout(
             title=f'股票 {code}  {stock_name}<br><sup>{market_state} | 预测天数: {pred_days}天</sup>',
             xaxis_title='日期', yaxis_title='价格', hovermode='x unified',

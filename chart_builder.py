@@ -49,6 +49,7 @@ def kmeans_market_state(df):
 
 def build_chart(df, code, pred_days=5):
     """生成完整的Plotly图表HTML片段"""
+    """生成完整的Plotly图表HTML片段"""
     # 确保数据按日期升序，且重置索引
     df = df.sort_values('date').reset_index(drop=True)
 

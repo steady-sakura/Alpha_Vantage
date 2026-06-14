@@ -33,6 +33,7 @@ def fetch_stock_data(symbol, days=120):
 
 def save_csv(df, code, upload_folder='uploads'):
     """将DataFrame保存为CSV文件，返回文件路径"""
+    """将DataFrame保存为CSV文件，返回文件路径"""
     os.makedirs(upload_folder, exist_ok=True)
     csv_path = os.path.join(upload_folder, f'{code}.csv')
     # 确保日期列保存为字符串，避免时区问题
