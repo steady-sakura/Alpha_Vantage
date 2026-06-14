@@ -1,4 +1,3 @@
-# app_predict.py（完整替换原文件）
 import os
 import json
 import time
@@ -74,7 +73,6 @@ def get_stock_name(symbol):
         resp = requests.get(url, headers=headers, timeout=5)
         resp.encoding = 'gbk'
         content = resp.text
-        # 格式：var hq_str_sh600584="长电科技,价格,..."
         if '="' in content:
             data_part = content.split('="')[1].split('",')[0]
             fields = data_part.split(',')
@@ -93,7 +91,6 @@ def forecast_ohlc(df, days=5):
     if len(df) < 5:
         return pd.DataFrame()
 
-    # 1. 预测收盘价（线性回归）
     X = np.arange(len(df)).reshape(-1, 1)
     y_close = df['close'].values
     model_close = LinearRegression()
@@ -101,33 +98,26 @@ def forecast_ohlc(df, days=5):
     X_pred = np.arange(len(df), len(df) + days).reshape(-1, 1)
     pred_close = model_close.predict(X_pred)
 
-    # 2. 预测开盘价（独立线性回归）
     y_open = df['open'].values
     model_open = LinearRegression()
     model_open.fit(X, y_open)
     pred_open = model_open.predict(X_pred)
 
-    # 3. 预测最高价、最低价（基于历史振幅比例）
-    # 计算历史最高价/收盘价比例 和 最低价/收盘价比例
-    high_ratio = (df['high'] / df['close']).values[-20:]  # 最近20日
+    high_ratio = (df['high'] / df['close']).values[-20:]
     low_ratio = (df['low'] / df['close']).values[-20:]
     avg_high_ratio = np.mean(high_ratio)
     avg_low_ratio = np.mean(low_ratio)
-    # 避免比例异常
     avg_high_ratio = max(avg_high_ratio, 1.01)
     avg_low_ratio = min(avg_low_ratio, 0.99)
 
     pred_high = pred_close * avg_high_ratio
     pred_low = pred_close * avg_low_ratio
 
-    # 约束：最高价 >= 开盘/收盘，最低价 <= 开盘/收盘
     for i in range(days):
         pred_high[i] = max(pred_high[i], pred_open[i], pred_close[i])
         pred_low[i] = min(pred_low[i], pred_open[i], pred_close[i])
-        # 开盘价调整到最高最低之间
         pred_open[i] = np.clip(pred_open[i], pred_low[i], pred_high[i])
 
-    # 生成日期序列（工作日）
     last_date = df['date'].iloc[-1]
     pred_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=days, freq='B')
 
@@ -141,6 +131,21 @@ def forecast_ohlc(df, days=5):
     return pred_df
 
 
+def forecast_volume(df, days=5):
+    """预测未来成交量（线性回归）"""
+    if len(df) < 10:
+        return np.array([])
+    X = np.arange(len(df)).reshape(-1, 1)
+    y = df['volume'].values
+    model = LinearRegression()
+    model.fit(X, y)
+    X_pred = np.arange(len(df), len(df) + days).reshape(-1, 1)
+    pred_vol = model.predict(X_pred)
+    # 成交量不能为负数
+    pred_vol = np.maximum(pred_vol, 0)
+    return pred_vol
+
+
 def compute_rsi(close_prices, period=14):
     """计算RSI指标"""
     delta = close_prices.diff()
@@ -149,21 +154,6 @@ def compute_rsi(close_prices, period=14):
     rs = gain / loss
     rsi = 100 - (100 / (1 + rs))
     return rsi
-
-
-def linear_regression_forecast(df, days=5):
-    """保留原函数以兼容旧调用，但新版不再使用"""
-    if len(df) < 3:
-        return [], []
-    X = np.arange(len(df)).reshape(-1, 1)
-    y = df['close'].values
-    model = LinearRegression()
-    model.fit(X, y)
-    last_date = df['date'].iloc[-1]
-    pred_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=days, freq='B')
-    X_pred = np.arange(len(df), len(df) + days).reshape(-1, 1)
-    pred_prices = model.predict(X_pred)
-    return pred_dates, pred_prices
 
 
 def kmeans_market_state(df):
@@ -199,7 +189,6 @@ def index():
 
 @app.route('/api/info')
 def api_info():
-    """获取股票名称"""
     code = request.args.get('code', '').strip()
     if not code:
         return jsonify({'status': 'error', 'message': '请输入股票代码'})
@@ -239,41 +228,58 @@ def api_charts():
             return jsonify({'status': 'error', 'message': '数据为空'})
         df = df.sort_values('date').reset_index(drop=True)
 
-        # 计算均线
+        # 预测OHLC（包含收盘价）
+        pred_df = forecast_ohlc(df, pred_days)
+
+        # 预测成交量
+        pred_vol = forecast_volume(df, pred_days)
+        has_vol_pred = len(pred_vol) > 0
+
+        # 计算移动平均线（历史部分）
         df['MA5'] = df['close'].rolling(5).mean()
         df['MA20'] = df['close'].rolling(20).mean()
 
-        # 预测完整OHLC（预测K线）
-        pred_df = forecast_ohlc(df, pred_days)
-
-        # 计算RSI
-        df['RSI'] = compute_rsi(df['close'], 14)
+        # 构建完整收盘价序列（历史+预测）用于计算延伸MA和RSI
+        if not pred_df.empty:
+            full_close = pd.concat([df['close'], pred_df['close']], ignore_index=True)
+            # 计算完整MA
+            full_ma5 = full_close.rolling(5).mean()
+            full_ma20 = full_close.rolling(20).mean()
+            # 提取预测部分的MA5/MA20
+            pred_ma5 = full_ma5.iloc[len(df):]
+            pred_ma20 = full_ma20.iloc[len(df):]
+            # 计算完整RSI
+            full_rsi = compute_rsi(full_close, 14)
+            pred_rsi = full_rsi.iloc[len(df):]
+        else:
+            pred_ma5 = pd.Series(dtype=float)
+            pred_ma20 = pd.Series(dtype=float)
+            pred_rsi = pd.Series(dtype=float)
 
         # 市场状态文字
         market_state = kmeans_market_state(df)
+        stock_name = get_stock_name(code)
 
-        # 创建3个子图：K线+预测，成交量，RSI
+        # 创建3个子图
         fig = make_subplots(
             rows=3, cols=1, shared_xaxes=True,
             vertical_spacing=0.03,
             row_heights=[0.6, 0.2, 0.2],
-            subplot_titles=('K线图 + 预测K线', '成交量', 'RSI (相对强弱指数)')
+            subplot_titles=('K线图 + 预测K线 (延长) + MA5/MA20延伸', '成交量 (真实 + 预测)', 'RSI (真实 + 预测)')
         )
 
-        # ---------- 第一行：K线图 ----------
+        # ===== 第一行：K线图 + 均线延伸 =====
         # 真实K线
         fig.add_trace(go.Candlestick(
             x=df['date'], open=df['open'], high=df['high'],
             low=df['low'], close=df['close'], name='真实K线'
         ), row=1, col=1)
 
-        # 均线
-        fig.add_trace(
-            go.Scatter(x=df['date'], y=df['MA5'], mode='lines', name='MA5', line=dict(color='orange', width=1.5)),
-            row=1, col=1)
-        fig.add_trace(
-            go.Scatter(x=df['date'], y=df['MA20'], mode='lines', name='MA20', line=dict(color='blue', width=1.5)),
-            row=1, col=1)
+        # 真实均线（只画到历史最后一天，避免重复）
+        fig.add_trace(go.Scatter(x=df['date'], y=df['MA5'], mode='lines', name='MA5 (历史)',
+                                 line=dict(color='orange', width=1.5)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df['date'], y=df['MA20'], mode='lines', name='MA20 (历史)',
+                                 line=dict(color='blue', width=1.5)), row=1, col=1)
 
         # 预测K线（延长部分）
         if not pred_df.empty:
@@ -286,22 +292,39 @@ def api_charts():
                 line_width=1.5
             ), row=1, col=1)
 
-        # ---------- 第二行：成交量 ----------
-        colors = ['red' if close >= open_ else 'green' for close, open_ in zip(df['close'], df['open'])]
-        fig.add_trace(go.Bar(x=df['date'], y=df['volume'], name='成交量', marker_color=colors), row=2, col=1)
+            # 预测均线延伸（使用虚线）
+            fig.add_trace(go.Scatter(x=pred_df['date'], y=pred_ma5, mode='lines', name='MA5 (预测延伸)',
+                                     line=dict(color='orange', width=1.5, dash='dash')), row=1, col=1)
+            fig.add_trace(go.Scatter(x=pred_df['date'], y=pred_ma20, mode='lines', name='MA20 (预测延伸)',
+                                     line=dict(color='blue', width=1.5, dash='dash')), row=1, col=1)
 
-        # ---------- 第三行：RSI ----------
-        fig.add_trace(
-            go.Scatter(x=df['date'], y=df['RSI'], mode='lines', name='RSI(14)', line=dict(color='purple', width=2)),
-            row=3, col=1)
-        # 添加超买超卖参考线
+        # ===== 第二行：成交量（真实柱状图 + 预测折线/柱状图） =====
+        colors = ['red' if close >= open_ else 'green' for close, open_ in zip(df['close'], df['open'])]
+        fig.add_trace(go.Bar(x=df['date'], y=df['volume'], name='真实成交量', marker_color=colors), row=2, col=1)
+
+        if has_vol_pred and not pred_df.empty:
+            # 预测成交量用橙色虚线+圆点表示
+            fig.add_trace(go.Scatter(x=pred_df['date'], y=pred_vol, mode='lines+markers', name='预测成交量',
+                                     line=dict(color='orange', width=2, dash='dot'), marker=dict(size=6, color='gold')),
+                          row=2, col=1)
+
+        # ===== 第三行：RSI（真实 + 预测） =====
+        df['RSI'] = compute_rsi(df['close'], 14)
+        fig.add_trace(go.Scatter(x=df['date'], y=df['RSI'], mode='lines', name='RSI(14) 历史',
+                                 line=dict(color='purple', width=2)), row=3, col=1)
+
+        if not pred_rsi.empty and not pred_df.empty:
+            fig.add_trace(go.Scatter(x=pred_df['date'], y=pred_rsi, mode='lines', name='RSI(14) 预测',
+                                     line=dict(color='orange', width=2, dash='dash')), row=3, col=1)
+
+        # 超买超卖参考线
         fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="超买线(70)", row=3, col=1)
         fig.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="超卖线(30)", row=3, col=1)
         fig.update_yaxes(range=[0, 100], row=3, col=1)
 
-        # 整体布局设置
+        # 整体布局
         fig.update_layout(
-            title=f'股票 {code}  {get_stock_name(code)}<br><sup>{market_state}</sup>',
+            title=f'股票 {code}  {stock_name}<br><sup>{market_state} | 预测天数: {pred_days}天</sup>',
             xaxis_title='日期', yaxis_title='价格', hovermode='x unified',
             template='plotly_dark', legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
             xaxis=dict(rangeslider=dict(visible=False), type='date')
