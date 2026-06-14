@@ -1,0 +1,186 @@
+<!-- templates/index_predict.html（完整替换原文件，新增企业名称显示和适配新图表） -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>股票K线图 - 线性回归预测 + K-Means + RSI</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <style>
+        .data-table-container {
+            max-height: 420px;
+            overflow-y: auto;
+            border: 1px solid #3e5a6b;
+            border-radius: 8px;
+            background: #1e2a32;
+        }
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+        .data-table th {
+            position: sticky;
+            top: 0;
+            background: #2c3e44;
+            color: #eef4ff;
+            padding: 8px 6px;
+            border-bottom: 2px solid #5d8aa8;
+            z-index: 10;
+            text-align: center;
+        }
+        .data-table td {
+            padding: 6px 6px;
+            border-bottom: 1px solid #2c4a55;
+            color: #c9e0f0;
+            text-align: center;
+        }
+        .data-table td:first-child, .data-table th:first-child {
+            text-align: center;
+        }
+        .data-table tr:hover td {
+            background-color: #2f4b55;
+        }
+        .col-date { min-width: 100px; }
+        .col-number { min-width: 50px; }
+        .positive { color: #ff6b6b; }
+        .negative { color: #6bcb6b; }
+        #stockNameBadge {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-left: 15px;
+            color: #00bcd4;
+        }
+    </style>
+</head>
+<body class="container mt-4">
+    <h2>股票K线图（预测K线延长 + RSI指标）</h2>
+    <div class="row mt-3 align-items-end">
+        <div class="col-auto">
+            <label class="form-label">股票代码</label>
+            <input type="text" id="stockCode" class="form-control" placeholder="例如 600584">
+        </div>
+        <div class="col-auto">
+            <label class="form-label">预测天数 (1~20)</label>
+            <input type="number" id="predDays" class="form-control" value="5" min="1" max="20">
+        </div>
+        <div class="col-auto">
+            <button class="btn btn-primary" onclick="loadData()">查询 & 预测</button>
+            <a class="btn btn-success d-none" id="downBtn" href="">导出CSV</a>
+        </div>
+        <div class="col-auto" id="stockInfoArea">
+            <span id="stockNameBadge"></span>
+        </div>
+    </div>
+    <div class="mt-4" id="tableContainer">
+        <div class="text-muted">请输入股票代码查询</div>
+    </div>
+    <div id="chartContainer" class="mt-4" style="min-height: 800px;"></div>
+
+    <script>
+        const columnNames = {
+            'date': '日期', 'open': '开盘', 'high': '最高',
+            'low': '最低', 'close': '收盘', 'volume': '成交量'
+        };
+
+        function formatValue(key, value) {
+            if (key === 'volume') return Number(value).toLocaleString();
+            if (typeof value === 'number') return value.toFixed(2);
+            return value;
+        }
+
+        function renderTable(data) {
+            if (!data || data.length === 0) {
+                document.getElementById('tableContainer').innerHTML = '<div class="alert alert-warning">无数据</div>';
+                return;
+            }
+            let html = `<div class="data-table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th class="col-number">#</th>
+                                        <th class="col-date">${columnNames['date']}</th>
+                                        <th>${columnNames['open']}</th>
+                                        <th>${columnNames['high']}</th>
+                                        <th>${columnNames['low']}</th>
+                                        <th>${columnNames['close']}</th>
+                                        <th>${columnNames['volume']}</th>
+                                    </tr>
+                                </thead>
+                                <tbody>`;
+            data.forEach((row, idx) => {
+                const rowNum = idx + 1;
+                const changeClass = row.close >= row.open ? 'positive' : 'negative';
+                html += `<tr>
+                            <td>${rowNum}</td>
+                            <td>${row.date}</td>
+                            <td class="${changeClass}">${formatValue('open', row.open)}</td>
+                            <td class="${changeClass}">${formatValue('high', row.high)}</td>
+                            <td class="${changeClass}">${formatValue('low', row.low)}</td>
+                            <td class="${changeClass}">${formatValue('close', row.close)}</td>
+                            <td>${formatValue('volume', row.volume)}</td>
+                         </tr>`;
+            });
+            html += `</tbody>
+                     </table>
+                    </div>`;
+            document.getElementById('tableContainer').innerHTML = html;
+        }
+
+        async function loadData() {
+            const code = document.getElementById('stockCode').value.trim();
+            const predDays = document.getElementById('predDays').value;
+            if (!code) return alert('请输入代码');
+
+            // 显示企业名称
+            try {
+                const infoRes = await fetch(`/api/info?code=${code}`);
+                const infoData = await infoRes.json();
+                if (infoData.status === 'ok') {
+                    document.getElementById('stockNameBadge').innerHTML = `🏢 ${infoData.name} (${code})`;
+                } else {
+                    document.getElementById('stockNameBadge').innerHTML = `📊 ${code}`;
+                }
+            } catch(e) {
+                document.getElementById('stockNameBadge').innerHTML = `📊 ${code}`;
+            }
+
+            const chartDiv = document.getElementById('chartContainer');
+            chartDiv.innerHTML = '<div class="text-center p-5"><div class="spinner-border text-primary"></div><p>加载中... (首次请求可能需要5-10秒，请耐心等待)</p></div>';
+            document.getElementById('tableContainer').innerHTML = '<div class="text-center p-3">加载数据表格...</div>';
+
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+            try {
+                let dataRes = await fetch(`/api/data?code=${code}`, { signal: controller.signal }).then(r => r.json());
+                if (dataRes.status !== 'ok') {
+                    alert(dataRes.message);
+                    chartDiv.innerHTML = `<div class="alert alert-danger">数据获取失败: ${dataRes.message}</div>`;
+                    clearTimeout(timeoutId);
+                    return;
+                }
+                renderTable(dataRes.data);
+                document.getElementById('downBtn').classList.remove('d-none');
+                document.getElementById('downBtn').href = `/export?code=${code}`;
+
+                let chartRes = await fetch(`/api/charts?code=${code}&pred_days=${predDays}`, { signal: controller.signal }).then(r => r.json());
+                clearTimeout(timeoutId);
+                if (chartRes.status !== 'ok') {
+                    chartDiv.innerHTML = `<div class="alert alert-danger">图表生成失败: ${chartRes.message}</div>`;
+                    return;
+                }
+                const figData = JSON.parse(chartRes.fig_json);
+                chartDiv.innerHTML = '';
+                Plotly.newPlot(chartDiv, figData.data, figData.layout, { responsive: true });
+                console.log("图表渲染完成，包含预测K线延长和RSI指标");
+            } catch (err) {
+                clearTimeout(timeoutId);
+                console.error(err);
+                let errMsg = err.name === 'AbortError' ? '请求超时（20秒），请重试。' : err.message;
+                chartDiv.innerHTML = `<div class="alert alert-danger">错误: ${errMsg}</div>`;
+            }
+        }
+    </script>
+</body>
+</html>
